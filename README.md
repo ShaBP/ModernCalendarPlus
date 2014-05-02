@@ -4,7 +4,7 @@ ModernCalendarPlus
 Pebble Watchface combining ModernMinimal with ModernCalendar.
 The end result is an analog watchface with clean minimal design, which presents calendar events read from Smartwatch Pro.
 
-I'd appreciate your donation:
+In case you like the Watchface and would like to donate something (whatever sum you'd like):
 https://www.paypal.com/cgi-bin/webscr?cmd=_donations&business=NEWCD2JELZBEN&lc=IL&item_name=ShaBP&currency_code=USD&bn=PP%2dDonationsBF%3abtn_donateCC_LG%2egif%3aNonHosted
 
 ModernCalendar Plus is an integration by ShaBP of two separate watchfaces:
