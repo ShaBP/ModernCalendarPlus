@@ -21,6 +21,7 @@ static struct tm *current_time;
 // Hands
 static Layer *hands_layer;
 static GPath *minute_hand; //Layer *minute_display_layer;
+//static GPath *goal_percent; // fill-in the minutes hand per steps goal percentage
 static GPath *hour_hand; //Layer *hour_display_layer;
 const GPathInfo MINUTE_HAND_POINTS = { 4, (GPoint[] ) { { -4, 12 }, { 4, 12 }, { 4, -69 }, { -4, -69 }, } };
 const GPathInfo HOUR_HAND_POINTS = { 4, (GPoint[] ) { { -4, 12 }, { 4, 12 }, { 4, -43 }, { -4, -43 }, } };
@@ -32,6 +33,7 @@ static TextLayer *date_layer;
 static char date_text[] = "13";
 static TextLayer *event_layer;
 static TextLayer *event_layer2; // from ModernCalendar
+static TextLayer *event_layer_loc;
 //static char date_text[] = "Wed 13 ";
 //static char empty_str[] = ""; // from ModernCalendar
 // Week Text status
@@ -41,6 +43,7 @@ static char week_text[] = "w99";
 static bool status_showing = false;
 static char event_text[21]; // from ModernCalendar
 static char event_text2[21]; // from ModernCalendar
+static char event_text_loc[21];
 static GBitmap *icon_status_1; // from ModernCalendar
 static GBitmap *icon_status_2; // from ModernCalendar
 static GBitmap *icon_status_3; // from ModernCalendar
@@ -52,6 +55,18 @@ static GBitmap *icon_bt_connected;
 static GBitmap *icon_bt_disconnected;
 static bool bt_status = false;
 static bool already_vibrated = false;
+// Steps:
+static TextLayer *steps_layer;
+static TextLayer *goal_layer;
+//static Layer *goal_percent_layer;
+static char steps[6], goal[6];
+static bool steps_avail = false;
+static int goal_percent;
+static GBitmap *steps_image;
+static BitmapLayer *steps_image_layer;
+static GBitmap *goal_image;
+static BitmapLayer *goal_image_layer;
+//static BitmapLayer *goal_fill_image_layer;
 // Pebble Battery Icon
 static BitmapLayer *battery_layer;
 static GBitmap *icon_battery_charging;
@@ -69,6 +84,9 @@ static uint8_t battery_level;
 static bool battery_plugged = false;
 static bool battery_charging = false;
 static bool battery_hide = false;
+// Small Time - ShaBP
+static TextLayer *small_time_layer;
+static char small_time_text[] = "99:99";
 // Timers
 static AppTimer *display_timer;
 static AppTimer *vibrate_timer;
@@ -76,7 +94,7 @@ static AppTimer *vibrate_timer;
 /// Easy set items for version management (and future settings screen)
 ///
 static bool badge = false;
-static bool hide_date = false;
+static bool hide_date = true;
 
 ///
 /// Draw Callbacks
@@ -100,7 +118,7 @@ void draw_battery_icon() {
 		else if (battery_level == 10) bitmap_layer_set_bitmap(battery_layer, icon_battery_10);
 	}
 	if (battery_plugged) battery_hide = false;
-	else if (battery_level <= 30) battery_hide = false;
+	else if (battery_level < 20) battery_hide = false;
 	else if (status_showing) battery_hide = false;
 	else battery_hide = true;
 	layer_set_hidden(bitmap_layer_get_layer(battery_layer), battery_hide);
@@ -124,13 +142,26 @@ void draw_event_status() {
 	if (status_showing) layer_set_hidden(event_status_layer, false);
 	else layer_set_hidden(event_status_layer, true);
 }
-// Display Event text - from ModernCalendar
-// if there's an event - always shown (not only on tap/shake). Can consider modifying.
-void display_event_text(char *text, char *relative) {
+// Draw/Update/Hide Event text - from ModernCalendar
+void draw_event_text(){
+  if (status_showing) {
+    layer_set_hidden(text_layer_get_layer(event_layer), false);
+    layer_set_hidden(text_layer_get_layer(event_layer2), false);
+    layer_set_hidden(text_layer_get_layer(event_layer_loc), false);
+  }
+  else {
+    layer_set_hidden(text_layer_get_layer(event_layer), true);
+    layer_set_hidden(text_layer_get_layer(event_layer2), true);
+    layer_set_hidden(text_layer_get_layer(event_layer_loc), true);
+  }  
+}
+void display_event_text(char *text, char *relative, char *location) {
   strncpy(event_text2, relative, sizeof(event_text2));
   text_layer_set_text(event_layer2, event_text2);
   strncpy(event_text, text, sizeof(event_text));
   text_layer_set_text(event_layer, event_text);
+  strncpy(event_text_loc, location, sizeof(event_text_loc));
+  text_layer_set_text(event_layer_loc, event_text_loc);
 }
 // Draw/Update Date
 void draw_date() {
@@ -146,37 +177,94 @@ void draw_hands(Layer *layer, GContext *ctx){
 	gpath_draw_filled(ctx, hour_hand);
 	gpath_draw_outline(ctx, hour_hand);
 	// Minite hand
+	const GPoint center = grect_center_point(&window_bounds);
 	gpath_rotate_to(minute_hand, TRIG_MAX_ANGLE * current_time->tm_min / 60);
 	gpath_draw_filled(ctx, minute_hand);
 	gpath_draw_outline(ctx, minute_hand);
-	// Dot in the middle
-	const GPoint center = grect_center_point(&window_bounds);
+//  const GPathInfo GOAL_PERCENT_POINTS = { 4, (GPoint[] ) { { -2, -2 }, { 2, -2 }, { 2, -50 }, { -2, -50 }, } };
+//  goal_percent = gpath_create(&GOAL_PERCENT_POINTS);
+//  gpath_move_to(goal_percent, center);
+//  gpath_rotate_to(goal_percent, TRIG_MAX_ANGLE * current_time->tm_min / 60);
+//  graphics_context_set_fill_color(ctx, GColorBlack);
+//  gpath_draw_filled(ctx, goal_percent);
+  // Dot in the middle
 	graphics_context_set_fill_color(ctx, GColorBlack);
 	graphics_fill_circle(ctx, center, 2);
 	graphics_context_set_fill_color(ctx, GColorWhite);
 	graphics_fill_circle(ctx, center, 1);	
 }
+// Draw/Update Time text
+/*
+void draw_small_time() {
+  strftime(small_time_text, sizeof(small_time_text), "%H:%M", current_time);
+  text_layer_set_text(small_time_layer, small_time_text);
+  if (status_showing) layer_set_hidden(text_layer_get_layer(small_time_layer), false);
+  else layer_set_hidden(text_layer_get_layer(small_time_layer), true);
+}
+*/
+void display_steps_text(int num_steps){
+  if (num_steps > -1){ // if steps are turned off or not iPhone 5s/6 - present nothing
+    steps_avail=true;
+    snprintf(steps, sizeof(steps), "%d", num_steps);
+    text_layer_set_text(steps_layer, steps);
+    //snprintf(steps, sizeof(steps), "28888"); // testing...
+  }
+}
+void display_goal_text(int goal_perc){
+  goal_percent = goal_perc;
+  snprintf(goal, sizeof(goal), "%d%%", goal_perc);  
+  //snprintf(goal, sizeof(goal), "100%%"); // testing...
+  text_layer_set_text(goal_layer, goal);
+  layer_mark_dirty(bitmap_layer_get_layer(goal_image_layer));    
+}
 // Hides status icons. Call draw of default battery/bluetooth icons (which will show or hide icon based on set logic). Hides date/window if selected
 void hide_status() {
 	status_showing = false;
+  layer_set_hidden(bitmap_layer_get_layer(steps_image_layer), true);
+//  layer_set_hidden(bitmap_layer_get_layer(goal_image_layer), true);
+//  layer_set_hidden(bitmap_layer_get_layer(goal_fill_image_layer), true);
+  layer_set_hidden(text_layer_get_layer(steps_layer), true);
+  layer_set_hidden(text_layer_get_layer(goal_layer), true);
+  if (steps_avail){
+    layer_set_hidden(bitmap_layer_get_layer(goal_image_layer), false);    
+  }
+//  layer_set_hidden(hands_layer, false);
+//  draw_small_time();
 	draw_battery_icon();
 	draw_bt_icon();
   draw_week_text();
   draw_event_status();
+  draw_event_text();
 	layer_set_hidden(text_layer_get_layer(date_layer), hide_date);
 	layer_set_hidden(bitmap_layer_get_layer(date_window_layer), hide_date);
 }
 // Shows status icons. Call draw of default battery/bluetooth icons (which will show or hide icon based on set logic). Shows date/window.
 void show_status() {
+  if (status_showing){
+    app_timer_cancel(display_timer); // Cancels previous timer if another show_status is called within the 4000ms
+  }
 	status_showing = true;
+//  layer_set_hidden(bitmap_layer_get_layer(goal_image_layer), false);
+//  layer_set_hidden(bitmap_layer_get_layer(goal_fill_image_layer), false);
+  if (steps_avail) {
+    layer_set_hidden(text_layer_get_layer(steps_layer), false);
+    layer_set_hidden(text_layer_get_layer(goal_layer), false);
+    layer_set_hidden(bitmap_layer_get_layer(steps_image_layer), false);
+  }
+  layer_set_hidden(bitmap_layer_get_layer(goal_image_layer), true);
+//  layer_set_hidden(hands_layer, true);
 	// Redraws battery icon
 	draw_battery_icon();
 	// Shows current bluetooth status icon
 	draw_bt_icon();
+  // Show small time text
+//  draw_small_time();
   // Shows week of year text
   draw_week_text();
   // Shows event status icons
   draw_event_status();
+  // Shows event text
+  draw_event_text();
 	// Show Date Window & Date
 	layer_set_hidden(text_layer_get_layer(date_layer), false);
 	layer_set_hidden(bitmap_layer_get_layer(date_window_layer), false);
@@ -244,6 +332,40 @@ void set_event_status(int new_event_status_display) {
 	layer_mark_dirty(event_status_layer);
 }
 ///
+void goal_image_layer_update_callback(Layer *me, GContext* ctx) {        
+  //draw the goal achievement percentage
+  graphics_context_set_stroke_color(ctx, GColorWhite);
+  graphics_context_set_fill_color(ctx, GColorWhite);
+  layer_remove_from_parent(bitmap_layer_get_layer(goal_image_layer));
+  bitmap_layer_destroy(goal_image_layer);
+  goal_image_layer = bitmap_layer_create(GRect(0, 0, 144, 168));
+  if (goal_percent <= 12){
+    graphics_fill_circle(ctx, GPoint(72+69*goal_percent/12, 3), 3);
+  }
+  else if (goal_percent <= 37){
+    graphics_fill_circle(ctx, GPoint(141, 165*(goal_percent-12)/25), 3);
+  }
+  else if (goal_percent <= 62){
+    graphics_fill_circle(ctx, GPoint(144-141*(goal_percent-37)/25, 165), 3);
+  }
+  else if (goal_percent <= 87){
+    graphics_fill_circle(ctx, GPoint(3, 168-165*(goal_percent-62)/25), 3);
+  }
+  else if (goal_percent <= 100){
+    graphics_fill_circle(ctx, GPoint(72*(goal_percent-87)/13, 3), 3);
+  }
+  else{ // if goal_percent > 100, keep it on the top and mark it differently
+    graphics_fill_circle(ctx, GPoint(72, 3), 3);
+    graphics_context_set_stroke_color(ctx, GColorBlack);
+    graphics_draw_circle(ctx, GPoint(72, 3), 2);
+    graphics_draw_pixel(ctx, GPoint(72, 3));
+  }
+  layer_set_update_proc(bitmap_layer_get_layer(goal_image_layer), goal_image_layer_update_callback);
+  layer_add_child(window_layer, bitmap_layer_get_layer(goal_image_layer));
+  if (steps_avail){
+    layer_set_hidden(bitmap_layer_get_layer(goal_image_layer), false);  
+  }
+}
 // Deint item to free up memory when leaving watchface
 ///
 void deinit() {
@@ -251,9 +373,10 @@ void deinit() {
 	bluetooth_connection_service_unsubscribe();
 	battery_state_service_unsubscribe();
 	accel_tap_service_unsubscribe();
+  layer_remove_from_parent(bitmap_layer_get_layer(battery_layer));
 	bitmap_layer_destroy(battery_layer);
 	gbitmap_destroy(icon_battery_charging);
-	gbitmap_destroy(icon_battery_10);
+	gbitmap_destroy(icon_battery_100);
 	gbitmap_destroy(icon_battery_90);
 	gbitmap_destroy(icon_battery_80);
 	gbitmap_destroy(icon_battery_70);
@@ -263,27 +386,53 @@ void deinit() {
 	gbitmap_destroy(icon_battery_30);
 	gbitmap_destroy(icon_battery_20);
 	gbitmap_destroy(icon_battery_10);
+  layer_remove_from_parent(bitmap_layer_get_layer(bt_layer));
 	bitmap_layer_destroy(bt_layer);
-	gbitmap_destroy(icon_bt_connected);
+ 	gbitmap_destroy(icon_bt_connected);
 	gbitmap_destroy(icon_bt_disconnected);
-	bitmap_layer_destroy(date_window_layer);
+  layer_remove_from_parent(bitmap_layer_get_layer(date_window_layer));
+ 	bitmap_layer_destroy(date_window_layer);
 	gbitmap_destroy(image_date_window);
+  layer_remove_from_parent(text_layer_get_layer(date_layer));
 	text_layer_destroy(date_layer);
+  layer_remove_from_parent(text_layer_get_layer(week_layer));
   text_layer_destroy(week_layer);
+  layer_remove_from_parent(hands_layer);
 	layer_destroy(hands_layer);
 	gpath_destroy(minute_hand);
 	gpath_destroy(hour_hand);
 	gbitmap_destroy(background_image);
+  layer_remove_from_parent(bitmap_layer_get_layer(background_layer));
   bitmap_layer_destroy(background_layer);
   gbitmap_destroy(icon_status_1); // from ModernCalendar
   gbitmap_destroy(icon_status_2); // from ModernCalendar
   gbitmap_destroy(icon_status_3); // from ModernCalendar
+  layer_remove_from_parent(text_layer_get_layer(event_layer));
   text_layer_destroy(event_layer); // from ModernCalendar
+  layer_remove_from_parent(text_layer_get_layer(event_layer2));
   text_layer_destroy(event_layer2); // from ModernCalendar
+  layer_remove_from_parent(text_layer_get_layer(event_layer_loc));
+  text_layer_destroy(event_layer_loc);
+  layer_remove_from_parent(event_status_layer);
   layer_destroy(event_status_layer); // from ModernCalendar
+  layer_remove_from_parent(text_layer_get_layer(steps_layer));
+  text_layer_destroy(steps_layer);
+  steps_layer = NULL;
+  layer_remove_from_parent(bitmap_layer_get_layer(steps_image_layer));
+  bitmap_layer_destroy(steps_image_layer);
+  //layer_remove_from_parent(text_layer_get_layer(goal_layer));
+  //text_layer_destroy(goal_layer);
+//  goal_layer = NULL;
+  layer_remove_from_parent(bitmap_layer_get_layer(goal_image_layer));
+  bitmap_layer_destroy(goal_image_layer);
+//  layer_remove_from_parent(text_layer_get_layer(small_time_layer));
+//  text_layer_destroy(small_time_layer);
+  //layer_remove_from_parent(bitmap_layer_get_layer(goal_fill_image_layer));
+  //bitmap_layer_destroy(goal_fill_image_layer);
 
-	layer_destroy(window_layer);
-  	window_destroy(window);
+
+//	layer_destroy(window_layer);
+	window_destroy(window);
 }
 ///
 /// Initial watchface call
@@ -309,7 +458,31 @@ void init() {
 	time_t now = time(NULL);
 	current_time = localtime(&now);
 	
-	// Date Window init, draw and hide
+  // Status icons and status layer creation - from ModernCalendar
+  icon_status_1 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_STATUS_1);
+  icon_status_2 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_STATUS_2);
+  icon_status_3 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_STATUS_3);
+  GRect sframe;
+  sframe.origin.x = 64;
+  sframe.origin.y = 36;
+  sframe.size.w = 17;
+  sframe.size.h = 9;
+
+  event_status_layer = layer_create(sframe);
+  layer_set_update_proc(event_status_layer, event_status_layer_update_callback);
+  layer_add_child(window_get_root_layer(window), event_status_layer);
+  layer_set_hidden(event_status_layer, true);
+
+	// Watch hands init - note that the order of layer creation determines which layer appears above which...
+	hour_hand = gpath_create(&HOUR_HAND_POINTS);
+ 	minute_hand = gpath_create(&MINUTE_HAND_POINTS);
+	gpath_move_to(hour_hand, center);
+ 	gpath_move_to(minute_hand, center);
+	hands_layer = layer_create(window_bounds);
+	layer_add_child(window_layer, hands_layer);
+	layer_set_update_proc(hands_layer, &draw_hands);
+
+  // Date Window init, draw and hide
 	image_date_window = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_DATE_WINDOW);
 	date_window_layer = bitmap_layer_create(GRect(117,75,27,21));
 	layer_add_child(window_layer, bitmap_layer_get_layer(date_window_layer));
@@ -351,63 +524,100 @@ void init() {
 	layer_add_child(window_layer, bitmap_layer_get_layer(battery_layer));
 	battery_state_handler(battery_state_service_peek());
 	
+  // Small time text init (for status upon shake) - ShaBP
+/*
+  small_time_layer = text_layer_create(GRect(22, 17, 100, 28));
+  text_layer_set_text_color(small_time_layer, GColorWhite);
+  text_layer_set_text_alignment(small_time_layer, GTextAlignmentCenter);
+  text_layer_set_background_color(small_time_layer, GColorClear);
+  text_layer_set_font(small_time_layer, fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD));
+  layer_add_child(window_layer, text_layer_get_layer(small_time_layer));
+  layer_set_hidden(text_layer_get_layer(small_time_layer), true);
+*/  
 	 //week status layer (ShaBP)
-  week_layer = text_layer_create(GRect(0, 72, 50, 30));
+  week_layer = text_layer_create(GRect(0, 72, 42, 21));
   text_layer_set_text_color(week_layer, GColorWhite);
 	text_layer_set_text_alignment(week_layer, GTextAlignmentLeft);
   text_layer_set_background_color(week_layer, GColorBlack);
   text_layer_set_font(week_layer, fonts_load_custom_font(resource_get_handle(RESOURCE_ID_FONT_ROBOTO_CONDENSED_21)));
 	layer_add_child(window_layer, text_layer_get_layer(week_layer));
-	layer_set_hidden(text_layer_get_layer(week_layer), false);
+	layer_set_hidden(text_layer_get_layer(week_layer), true);
   draw_week_text();
 
-  // Status icons and event layers init - from ModernCalendar
-  icon_status_1 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_STATUS_1);
-  icon_status_2 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_STATUS_2);
-  icon_status_3 = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_STATUS_3);
- 
-  event_layer = text_layer_create(GRect(27, 112, 90, 21));
+  // Event layers init - from ModernCalendar 
+  event_layer = text_layer_create(GRect(27, 108, 90, 15));
   text_layer_set_text_color(event_layer, GColorWhite);
   text_layer_set_text_alignment(event_layer, GTextAlignmentCenter);
   text_layer_set_background_color(event_layer, GColorClear);
-  text_layer_set_font(event_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+  text_layer_set_font(event_layer, fonts_get_system_font(FONT_KEY_GOTHIC_14_BOLD));
   layer_add_child(window_get_root_layer(window), text_layer_get_layer(event_layer));
+	layer_set_hidden(text_layer_get_layer(event_layer), true);
 
-  event_layer2 = text_layer_create(GRect(27, 93, 90, 21));
+  event_layer2 = text_layer_create(GRect(23, 93, 98, 15));
   text_layer_set_text_color(event_layer2, GColorWhite);
   text_layer_set_text_alignment(event_layer2, GTextAlignmentCenter);
   text_layer_set_background_color(event_layer2, GColorClear);
-  text_layer_set_font(event_layer2, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+  text_layer_set_font(event_layer2, fonts_get_system_font(FONT_KEY_GOTHIC_14));
   layer_add_child(window_get_root_layer(window), text_layer_get_layer(event_layer2));
+	layer_set_hidden(text_layer_get_layer(event_layer2), true);
   
-  // Event status layer creation - from ModernCalendar
-  GRect sframe;
-  sframe.origin.x = 54;
-  sframe.origin.y = 56;
-  sframe.size.w = 38;
-  sframe.size.h = 9;
+  event_layer_loc = text_layer_create(GRect(23, 123, 98, 15));
+  text_layer_set_text_color(event_layer_loc, GColorWhite);
+  text_layer_set_text_alignment(event_layer_loc, GTextAlignmentCenter);
+  text_layer_set_background_color(event_layer_loc, GColorClear);
+  text_layer_set_font(event_layer_loc, fonts_get_system_font(FONT_KEY_GOTHIC_14));
+  layer_add_child(window_get_root_layer(window), text_layer_get_layer(event_layer_loc));
+	layer_set_hidden(text_layer_get_layer(event_layer_loc), true);
+  draw_event_text();
 
-  event_status_layer = layer_create(sframe);
-  layer_set_update_proc(event_status_layer, event_status_layer_update_callback);
-  layer_add_child(window_get_root_layer(window), event_status_layer);
+  // steps layer (ShaBP)
+  steps_layer = text_layer_create(GRect(20, 143, 47, 18));
+  text_layer_set_text_color(steps_layer, GColorWhite);
+	text_layer_set_text_alignment(steps_layer, GTextAlignmentLeft);
+  text_layer_set_background_color(steps_layer, GColorBlack);
+  text_layer_set_font(steps_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+	layer_add_child(window_layer, text_layer_get_layer(steps_layer));
+  layer_set_hidden(text_layer_get_layer(steps_layer), true);
+  
+  steps_image = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_STEPS);
+  steps_image_layer = bitmap_layer_create(GRect(10, 148, 9, 14));
+  bitmap_layer_set_bitmap(steps_image_layer, steps_image);
+  layer_add_child(window_layer, bitmap_layer_get_layer(steps_image_layer));
+  layer_set_hidden(bitmap_layer_get_layer(steps_image_layer), true);
+  
+  // steps goal layer (ShaBP)
+
+  goal_layer = text_layer_create(GRect(99, 143, 33, 18));
+  text_layer_set_text_color(goal_layer, GColorWhite);
+	text_layer_set_text_alignment(goal_layer, GTextAlignmentRight);
+  text_layer_set_background_color(goal_layer, GColorBlack);
+  text_layer_set_font(goal_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18));
+	layer_add_child(window_layer, text_layer_get_layer(goal_layer));
+  layer_set_hidden(text_layer_get_layer(goal_layer), true);
+/*  
+  goal_image = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_GOAL);
+  GRect frame_goal = (GRect) {
+    .origin = { .x = 67, .y = 0 },
+    .size = goal_image->bounds.size
+  };
+*/
+  goal_image_layer = bitmap_layer_create(GRect(0, 0, 144, 168));
+//  bitmap_layer_set_bitmap(goal_image_layer, goal_image);
+  layer_set_update_proc(bitmap_layer_get_layer(goal_image_layer), goal_image_layer_update_callback);
+  layer_add_child(window_layer, bitmap_layer_get_layer(goal_image_layer));
+  layer_set_hidden(bitmap_layer_get_layer(goal_image_layer), true);
+  //layer_add_child(window_layer, bitmap_layer_get_layer(goal_fill_image_layer));
 
   // Message inbox and Calendar init - from ModernCalendar
   app_message_register_inbox_received(received_message);
   app_message_open(124, 256);
 
   calendar_init();
+  steps_init();
 
   // Show status screen on init (comment out to have battery and bluetooth status hidden at init)
-	show_status();
+	//show_status();
  		
-	// Watch hands init
-	hour_hand = gpath_create(&HOUR_HAND_POINTS);
- 	minute_hand = gpath_create(&MINUTE_HAND_POINTS);
-	gpath_move_to(hour_hand, center);
- 	gpath_move_to(minute_hand, center);
-	hands_layer = layer_create(window_bounds);
-	layer_add_child(window_layer, hands_layer);
-	layer_set_update_proc(hands_layer, &draw_hands);
 }
 
 ///
